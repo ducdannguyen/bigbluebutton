@@ -259,14 +259,16 @@ export default class ShapeDrawListener extends Component {
   // we use the same function for all of them
   handleDrawCommonAnnotation(startPoint, endPoint, status, id, shapeType) {
     const { normalizeThickness, sendAnnotation } = this.props.actions;
+    const { whiteboardId, userId } = this.props;
+    const { color, thickness } = this.props.drawSettings;
 
     const annotation = {
       id,
       status,
       annotationType: shapeType,
       annotationInfo: {
-        color: this.props.drawSettings.color,
-        thickness: normalizeThickness(this.props.drawSettings.thickness),
+        color,
+        thickness: normalizeThickness(thickness),
         points: [
           startPoint.x,
           startPoint.y,
@@ -274,16 +276,16 @@ export default class ShapeDrawListener extends Component {
           endPoint.y,
         ],
         id,
-        whiteboardId: this.props.whiteboardId,
+        whiteboardId,
         status,
         type: shapeType,
       },
-      wbId: this.props.whiteboardId,
-      userId: this.props.userId,
+      wbId: whiteboardId,
+      userId,
       position: 0,
     };
 
-    sendAnnotation(annotation);
+    sendAnnotation(annotation, whiteboardId);
   }
 
   discardAnnotation() {
@@ -296,7 +298,7 @@ export default class ShapeDrawListener extends Component {
 
   render() {
     const { tool } = this.props.drawSettings;
-    const baseName = Meteor.settings.public.app.basename;
+    const baseName = Meteor.settings.public.app.cdn + Meteor.settings.public.app.basename;
     const shapeDrawStyle = {
       width: '100%',
       height: '100%',
@@ -346,6 +348,6 @@ ShapeDrawListener.propTypes = {
     // Annotation thickness (not normalized)
     thickness: PropTypes.number.isRequired,
     // The name of the tool currently selected
-    tool: PropTypes.string.isRequired,
+    tool: PropTypes.string,
   }).isRequired,
 };

@@ -1,4 +1,5 @@
 import Breakouts from '/imports/api/breakouts';
+import Meetings from '/imports/api/meetings';
 import Settings from '/imports/ui/services/settings';
 import Auth from '/imports/ui/services/auth/index';
 
@@ -12,13 +13,22 @@ const getFontSize = () => {
   return applicationSettings ? applicationSettings.fontSize : '16px';
 };
 
+const getBreakoutRooms = () => Breakouts.find().fetch();
+
+const getMeeting = () => {
+  const { meetingID } = Auth;
+  return Meetings.findOne({ meetingId: meetingID });
+};
+
 function meetingIsBreakout() {
-  const breakouts = Breakouts.find().fetch();
-  return (breakouts && breakouts.some(b => b.breakoutId === Auth.meetingID));
+  const meeting = getMeeting();
+  return (meeting && meeting.meetingProp.isBreakout);
 }
 
 export {
   getCaptionsStatus,
   getFontSize,
   meetingIsBreakout,
+  getBreakoutRooms,
+  getMeeting,
 };

@@ -1,6 +1,5 @@
 import { Tracker } from 'meteor/tracker';
 import { makeCall } from '/imports/ui/services/api';
-import VertoBridge from '/imports/api/audio/client/bridge/verto';
 import KurentoBridge from '/imports/api/audio/client/bridge/kurento';
 import Auth from '/imports/ui/services/auth';
 import VoiceUsers from '/imports/api/voice-users';
@@ -8,10 +7,11 @@ import SIPBridge from '/imports/api/audio/client/bridge/sip';
 import logger from '/imports/startup/client/logger';
 import { notify } from '/imports/ui/services/notification';
 import browser from 'browser-detect';
+import iosWebviewAudioPolyfills from '../../../utils/ios-webview-audio-polyfills';
+import { tryGenerateIceCandidates } from '../../../utils/safari-webrtc';
 
 const MEDIA = Meteor.settings.public.media;
 const MEDIA_TAG = MEDIA.mediaTag;
-const USE_SIP = MEDIA.useSIPAudio;
 const ECHO_TEST_NUMBER = MEDIA.echoTestNumber;
 const MAX_LISTEN_ONLY_RETRIES = 1;
 
@@ -46,15 +46,17 @@ class AudioManager {
   }
 
   init(userData) {
-    this.bridge = USE_SIP ? new SIPBridge(userData) : new VertoBridge(userData);
+    this.bridge = new SIPBridge(userData); // no alternative as of 2019-03-08
     if (this.useKurento) {
       this.listenOnlyBridge = new KurentoBridge(userData);
     }
     this.userData = userData;
     this.initialized = true;
   }
-  setAudioMessages(messages) {
+
+  setAudioMessages(messages, intl) {
     this.messages = messages;
+    this.intl = intl;
   }
 
   defineProperties(obj) {
@@ -136,7 +138,7 @@ class AudioManager {
     this.isEchoTest = false;
     const { name } = browser();
     // The kurento bridge isn't a full audio bridge yet, so we have to differ it
-    const bridge  = this.useKurento? this.listenOnlyBridge : this.bridge;
+    const bridge = this.useKurento ? this.listenOnlyBridge : this.bridge;
 
     const callOptions = {
       isListenOnly: true,
@@ -146,8 +148,19 @@ class AudioManager {
 
     // Webkit ICE restrictions demand a capture device permission to release
     // host candidates
-    if (name == 'safari') {
-      await this.askDevicesPermissions();
+    if (name === 'safari') {
+      try {
+        await tryGenerateIceCandidates();
+      } catch (e) {
+        this.notify(this.intl.formatMessage(this.messages.error.ICE_NEGOTIATION_FAILED));
+      }
+    }
+
+    // Call polyfills for webrtc client if navigator is "iOS Webview"
+    const userAgent = window.navigator.userAgent.toLocaleLowerCase();
+    if ((userAgent.indexOf('iphone') > -1 || userAgent.indexOf('ipad') > -1)
+       && userAgent.indexOf('safari') === -1) {
+      iosWebviewAudioPolyfills();
     }
 
     // We need this until we upgrade to SIP 9x. See #4690
@@ -161,13 +174,12 @@ class AudioManager {
         clearTimeout(iceGatheringTimeout);
       }
 
-      logger.error('Listen only error:', err, 'on try', retries);
-      const error = {
+      logger.error({ logCode: 'audiomanager_listenonly_error' }, 'Listen only error:', err, 'on try', retries);
+      throw {
         type: 'MEDIA_ERROR',
         message: this.messages.error.MEDIA_ERROR,
-      }
-      throw error;
-    }
+      };
+    };
 
     return this.onAudioJoining()
       .then(() => Promise.race([
@@ -181,14 +193,14 @@ class AudioManager {
             // Exit previous SFU session and clean audio tag state
             window.kurentoExitAudio();
             this.useKurento = false;
-            let audio = document.querySelector(MEDIA_TAG);
+            const audio = document.querySelector(MEDIA_TAG);
             audio.muted = false;
           }
 
           try {
             await this.joinListenOnly(++retries);
-          } catch (err) {
-            return handleListenOnlyError(err);
+          } catch (error) {
+            return handleListenOnlyError(error);
           }
         } else {
           handleListenOnlyError(err);
@@ -207,7 +219,7 @@ class AudioManager {
   exitAudio() {
     if (!this.isConnected) return Promise.resolve();
 
-    const bridge  = (this.useKurento && this.isListenOnly) ? this.listenOnlyBridge : this.bridge;
+    const bridge = (this.useKurento && this.isListenOnly) ? this.listenOnlyBridge : this.bridge;
 
     this.isHangingUp = true;
     this.isEchoTest = false;
@@ -235,6 +247,8 @@ class AudioManager {
         changed: (id, fields) => {
           if (fields.muted !== undefined && fields.muted !== this.isMuted) {
             this.isMuted = fields.muted;
+            const muteState = this.isMuted ? 'selfMuted' : 'selfUnmuted';
+            window.parent.postMessage({ response: muteState }, '*');
           }
 
           if (fields.talking !== undefined && fields.talking !== this.isTalking) {
@@ -249,7 +263,9 @@ class AudioManager {
     }
 
     if (!this.isEchoTest) {
-      this.notify(this.messages.info.JOINED_AUDIO);
+      window.parent.postMessage({ response: 'joinedAudio' }, '*');
+      this.notify(this.intl.formatMessage(this.messages.info.JOINED_AUDIO));
+      logger.info({ logCode: 'audio_joined' }, 'Audio Joined');
     }
   }
 
@@ -271,8 +287,9 @@ class AudioManager {
     }
 
     if (!this.error && !this.isEchoTest) {
-      this.notify(this.messages.info.LEFT_AUDIO);
+      this.notify(this.intl.formatMessage(this.messages.info.LEFT_AUDIO), false, 'audio_off');
     }
+    window.parent.postMessage({ response: 'notInAudio' }, '*');
   }
 
   callStateCallback(response) {
@@ -293,11 +310,14 @@ class AudioManager {
         this.onAudioJoin();
         resolve(STARTED);
       } else if (status === ENDED) {
+        logger.debug({ logCode: 'audio_ended' }, 'Audio ended without issue');
         this.onAudioExit();
       } else if (status === FAILED) {
-        this.error = error;
-        this.notify(this.messages.error[error] || this.messages.error.GENERIC_ERROR, true);
-        logger.error('Audio Error:', error, bridgeError);
+        const errorKey = this.messages.error[error] || this.messages.error.GENERIC_ERROR;
+        const errorMsg = this.intl.formatMessage(errorKey, { 0: bridgeError });
+        this.error = !!error;
+        this.notify(errorMsg, true);
+        logger.error({ logCode: 'audio_failure', error, cause: bridgeError }, 'Audio Error:', error, bridgeError);
         this.exitAudio();
         this.onAudioExit();
       }
@@ -309,30 +329,27 @@ class AudioManager {
       this.listenOnlyAudioContext.close();
     }
 
-    this.listenOnlyAudioContext = window.AudioContext ?
-      new window.AudioContext() :
-      new window.webkitAudioContext();
+    this.listenOnlyAudioContext = window.AudioContext
+      ? new window.AudioContext()
+      : new window.webkitAudioContext();
 
-    // Create a placeholder buffer to upstart audio context
-    const pBuffer = this.listenOnlyAudioContext.createBuffer(2, this.listenOnlyAudioContext.sampleRate * 3, this.listenOnlyAudioContext.sampleRate);
+    const dest = this.listenOnlyAudioContext.createMediaStreamDestination();
 
-    var dest = this.listenOnlyAudioContext.createMediaStreamDestination();
-
-    let audio = document.querySelector(MEDIA_TAG);
+    const audio = document.querySelector(MEDIA_TAG);
 
     // Play bogus silent audio to try to circumvent autoplay policy on Safari
-    audio.src = 'resources/sounds/silence.mp3'
+    audio.src = 'resources/sounds/silence.mp3';
 
-    audio.play().catch(e => {
-      logger.warn('Error on playing test audio:', e);
+    audio.play().catch((e) => {
+      logger.warn({ logCode: 'audiomanager_error_test_audio' }, 'Error on playing test audio:', e);
     });
 
     return dest.stream;
   }
 
   isUsingAudio() {
-    return this.isConnected || this.isConnecting ||
-      this.isHangingUp || this.isEchoTest;
+    return this.isConnected || this.isConnecting
+      || this.isHangingUp || this.isEchoTest;
   }
 
   setDefaultInputDevice() {
@@ -349,11 +366,10 @@ class AudioManager {
       return Promise.resolve(inputDevice);
     };
 
-    const handleChangeInputDeviceError = () =>
-      Promise.reject({
-        type: 'MEDIA_ERROR',
-        message: this.messages.error.MEDIA_ERROR,
-      });
+    const handleChangeInputDeviceError = () => Promise.reject({
+      type: 'MEDIA_ERROR',
+      message: this.messages.error.MEDIA_ERROR,
+    });
 
     if (!deviceId) {
       return this.bridge.setDefaultInputDevice()
@@ -393,11 +409,13 @@ class AudioManager {
     return this._userData;
   }
 
-  notify(message, error = false) {
+  notify(message, error = false, icon = 'unmute') {
+    const audioIcon = this.isListenOnly ? 'listen' : icon;
+
     notify(
       message,
       error ? 'error' : 'info',
-      this.isListenOnly ? 'audio_on' : 'unmute',
+      audioIcon,
     );
   }
 }

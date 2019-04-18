@@ -5,6 +5,8 @@ GEM
     builder (3.2.3)
     crass (1.0.4)
     fastimage (2.1.5)
+    java_properties (0.0.4)
+    jwt (2.1.0)
     loofah (2.2.3)
       crass (~> 1.0.2)
       nokogiri (>= 1.5.9)
@@ -23,6 +25,8 @@ DEPENDENCIES
   absolute_time
   builder
   fastimage
+  java_properties
+  jwt
   loofah
   nokogiri
   open4

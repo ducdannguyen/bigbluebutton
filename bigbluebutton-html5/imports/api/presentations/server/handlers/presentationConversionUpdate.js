@@ -21,12 +21,13 @@ const GENERATED_SLIDE_KEY = 'GENERATED_SLIDE';
 export default function handlePresentationConversionUpdate({ body }, meetingId) {
   check(body, Object);
 
-  const presentationId = body.presentationId;
-  const status = body.messageKey;
-  const presentationName = body.presName;
+  const {
+    presentationId, podId, messageKey: status, presName: presentationName,
+  } = body;
 
   check(meetingId, String);
   check(presentationId, String);
+  check(podId, String);
   check(status, String);
 
   const statusModifier = {
@@ -49,7 +50,6 @@ export default function handlePresentationConversionUpdate({ body }, meetingId) 
       statusModifier.id = presentationId;
       statusModifier.name = presentationName;
       statusModifier['conversion.error'] = true;
-      statusModifier['conversion.done'] = true;
       break;
 
     case GENERATED_SLIDE_KEY:
@@ -63,11 +63,12 @@ export default function handlePresentationConversionUpdate({ body }, meetingId) 
 
   const selector = {
     meetingId,
+    podId,
     id: presentationId,
   };
 
   const modifier = {
-    $set: Object.assign({ meetingId }, statusModifier),
+    $set: Object.assign({ meetingId, podId }, statusModifier),
   };
 
   const cb = (err, numChanged) => {
@@ -80,7 +81,7 @@ export default function handlePresentationConversionUpdate({ body }, meetingId) 
       return Logger.info(`Updated presentation conversion status=${status} id=${presentationId} meeting=${meetingId}`);
     }
 
-    return Logger.info(`Upserted presentation conversion status=${status} id=${presentationId} meeting=${meetingId}`);
+    return Logger.debug(`Upserted presentation conversion status=${status} id=${presentationId} meeting=${meetingId}`);
   };
 
   return Presentations.upsert(selector, modifier, cb);

@@ -4,11 +4,10 @@
          xmlns:mate="http://mate.asfusion.com/"
          verticalScrollPolicy="off"
          horizontalScrollPolicy="off"
-         verticalAlign="middle"
          creationComplete="onCreationCompleteHandler(event)">
   <fx:Declarations>
     <mate:Listener type="{BreakoutRoomsReadyEvent.BREAKOUT_ROOMS_READY_EVENT}" method="handleBreakoutRoomsReadyEvent" />
-    <mate:Listener type="{ChangeMyRole.CHANGE_MY_ROLE_EVENT}" method="roleChanged" />
+    <mate:Listener type="{ChangeMyRole.CHANGE_MY_ROLE_EVENT}" method="handleChangeMyRoleEvent" />
   </fx:Declarations>
   <fx:Script>
     <![CDATA[
@@ -43,7 +42,7 @@
         breakoutRoomsReady = LiveMeeting.inst().breakoutRooms.breakoutRoomsReady;
       }
       
-      private function roleChanged(event: ChangeMyRole):void {
+      private function handleChangeMyRoleEvent(event:ChangeMyRole):void {
         moderator = UsersUtil.amIModerator();
       }
       

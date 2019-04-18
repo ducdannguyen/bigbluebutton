@@ -2,9 +2,8 @@ const isFirefox = typeof window.InstallTrigger !== 'undefined';
 const isOpera = !!window.opera || navigator.userAgent.indexOf(' OPR/') >= 0;
 const isChrome = !!window.chrome && !isOpera;
 const isSafari = navigator.userAgent.indexOf('Safari') >= 0 && !isChrome;
+const isElectron = navigator.userAgent.toLowerCase().indexOf(' electron/') > -1;
 const hasDisplayMedia = (typeof navigator.getDisplayMedia === 'function'
-  || typeof navigator.mediaDevices.getDisplayMedia === 'function');
-const kurentoHandler = null;
 
 Kurento = function (
   tag,
@@ -81,7 +80,7 @@ Kurento = function (
   } else {
     const _this = this;
     this.onSuccess = function () {
-      _this.logSuccess('Default success handler');
+      _this.logger('Default success handler');
     };
   }
 };
@@ -96,6 +95,10 @@ KurentoManager.prototype.exitScreenShare = function () {
   if (typeof this.kurentoScreenshare !== 'undefined' && this.kurentoScreenshare) {
     if (this.kurentoScreenshare.logger !== null) {
       this.kurentoScreenshare.logger.info('  [exitScreenShare] Exiting screensharing');
+    }
+
+    if(this.kurentoScreenshare.webRtcPeer) {
+      this.kurentoScreenshare.webRtcPeer.peerConnection.oniceconnectionstatechange = null;
     }
 
     if (this.kurentoScreenshare.ws !== null) {
@@ -228,7 +231,7 @@ Kurento.prototype.init = function () {
     this.ws = new WebSocket(this.wsUrl);
 
     this.ws.onmessage = this.onWSMessage.bind(this);
-    this.ws.onclose = (close) => {
+    this.ws.onclose = () => {
       kurentoManager.exitScreenShare();
       self.onFail('Websocket connection closed');
     };
@@ -477,9 +480,9 @@ Kurento.prototype.setAudio = function (tag) {
 };
 
 Kurento.prototype.listenOnly = function () {
-  var self = this;
+  const self = this;
   if (!this.webRtcPeer) {
-    var options = {
+    const options = {
       onicecandidate : this.onListenOnlyIceCandidate.bind(this),
       mediaConstraints: {
         audio: true,
@@ -491,7 +494,7 @@ Kurento.prototype.listenOnly = function () {
 
     self.webRtcPeer = kurentoUtils.WebRtcPeer.WebRtcPeerRecvonly(options, function (error) {
       if (error) {
-        return self.onFail(PEER_ERROR);
+        return self.onFail(error);
       }
 
       this.generateOffer(self.onOfferListenOnly.bind(self));
@@ -517,7 +520,7 @@ Kurento.prototype.onOfferListenOnly = function (error, offerSdp) {
   const self = this;
   if (error) {
     this.logger.error('[onOfferListenOnly]', error);
-    return this.onFail(SDP_ERROR);
+    return this.onFail(error);
   }
 
   const message = {
@@ -635,7 +638,7 @@ window.getScreenConstraints = function (sendSource, callback) {
         },
         (response) => {
           resolve(response);
-        },
+        }
       );
     });
   };
@@ -652,7 +655,7 @@ window.getScreenConstraints = function (sendSource, callback) {
     let gDPConstraints = {
       video: true,
       optional: optionalConstraints
-    }
+    };
 
     return gDPConstraints;
   };
@@ -669,6 +672,18 @@ window.getScreenConstraints = function (sendSource, callback) {
     { googVeryHighBitrate: true },
   ];
 
+  if (isElectron) {
+    const sourceId = ipcRenderer.sendSync('screen-chooseSync');
+    kurentoManager.kurentoScreenshare.extensionInstalled = true;
+
+    // this statement sets gets 'sourceId" and sets "chromeMediaSourceId"
+    screenConstraints.video.chromeMediaSource = { exact: [sendSource] };
+    screenConstraints.video.chromeMediaSourceId = sourceId;
+    screenConstraints.optional = optionalConstraints;
+
+    console.log('getScreenConstraints for Chrome returns => ', screenConstraints);
+    return callback(null, screenConstraints);
+  }
 
   if (isChrome) {
     if (!hasDisplayMedia) {
@@ -683,9 +698,14 @@ window.getScreenConstraints = function (sendSource, callback) {
 
         kurentoManager.kurentoScreenshare.extensionInstalled = true;
 
-        // this statement sets gets 'sourceId" and sets "chromeMediaSourceId"
-        screenConstraints.video.chromeMediaSource = { exact: [sendSource] };
-        screenConstraints.video.chromeMediaSourceId = sourceId;
+        // Re-wrap the video constraints into the mandatory object (latest adapter)
+        screenConstraints.video = {};
+        screenConstraints.video.mandatory = {};
+        screenConstraints.video.mandatory.maxFrameRate = 10;
+        screenConstraints.video.mandatory.maxHeight = kurentoManager.kurentoScreenshare.vid_max_height;
+        screenConstraints.video.mandatory.maxWidth = kurentoManager.kurentoScreenshare.vid_max_width;
+        screenConstraints.video.mandatory.chromeMediaSource = sendSource;
+        screenConstraints.video.mandatory.chromeMediaSourceId = sourceId;
         screenConstraints.optional = optionalConstraints;
 
         console.log('getScreenConstraints for Chrome returns => ', screenConstraints);

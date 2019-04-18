@@ -20,11 +20,17 @@ case class MeetingInactivityTracker(
   }
 
   def hasRecentActivity(nowInMs: Long): Boolean = {
-    nowInMs - lastActivityTimestampInMs < maxInactivityTimeoutInMs - warningBeforeMaxInMs
+    val left = nowInMs - lastActivityTimestampInMs
+    val right = maxInactivityTimeoutInMs - warningBeforeMaxInMs
+    left < right
   }
 
   def isMeetingInactive(nowInMs: Long): Boolean = {
-    warningSent && (nowInMs - lastActivityTimestampInMs) > maxInactivityTimeoutInMs
+    if (maxInactivityTimeoutInMs > 0) {
+      warningSent && (nowInMs - lastActivityTimestampInMs) > maxInactivityTimeoutInMs
+    } else {
+      false
+    }
   }
 
   def timeLeftInMs(nowInMs: Long): Long = {
@@ -39,7 +45,10 @@ case class MeetingExpiryTracker(
     lastUserLeftOnInMs:                Option[Long],
     durationInMs:                      Long,
     meetingExpireIfNoUserJoinedInMs:   Long,
-    meetingExpireWhenLastUserLeftInMs: Long
+    meetingExpireWhenLastUserLeftInMs: Long,
+    userInactivityInspectTimerInMs:    Long,
+    userInactivityThresholdInMs:       Long,
+    userActivitySignResponseDelayInMs: Long
 ) {
   def setUserHasJoined(): MeetingExpiryTracker = {
     if (!userHasJoined) {
@@ -57,7 +66,10 @@ case class MeetingExpiryTracker(
     val expire = for {
       lastUserLeftOn <- lastUserLeftOnInMs
     } yield {
-      timestampInMs - lastUserLeftOn > meetingExpireWhenLastUserLeftInMs
+      // Check if we need to end meeting right away when the last user left
+      // ralam Nov 16, 2018
+      if (meetingExpireWhenLastUserLeftInMs == 0) true
+      else timestampInMs - lastUserLeftOn > meetingExpireWhenLastUserLeftInMs
     }
 
     expire.getOrElse(false)

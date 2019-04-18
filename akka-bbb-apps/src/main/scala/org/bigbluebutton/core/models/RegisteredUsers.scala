@@ -6,8 +6,21 @@ import com.softwaremill.quicklens._
 object RegisteredUsers {
   def create(userId: String, extId: String, name: String, roles: String,
              token: String, avatar: String, guest: Boolean, authenticated: Boolean,
-             waitingForAcceptance: Boolean): RegisteredUser = {
-    new RegisteredUser(userId, extId, name, roles, token, avatar, guest, authenticated, waitingForAcceptance)
+             guestStatus: String): RegisteredUser = {
+    new RegisteredUser(
+      userId,
+      extId,
+      name,
+      roles,
+      token,
+      avatar,
+      guest,
+      authenticated,
+      guestStatus,
+      System.currentTimeMillis(),
+      false,
+      false
+    )
   }
 
   def findWithToken(token: String, users: RegisteredUsers): Option[RegisteredUser] = {
@@ -16,6 +29,10 @@ object RegisteredUsers {
 
   def findWithUserId(id: String, users: RegisteredUsers): Option[RegisteredUser] = {
     users.toVector.find(ru => id == ru.id)
+  }
+
+  def findUsersNotJoined(users: RegisteredUsers): Vector[RegisteredUser] = {
+    users.toVector.filter(u => u.joined == false && u.markAsJoinTimedOut == false)
   }
 
   def getRegisteredUserWithToken(token: String, userId: String, regUsers: RegisteredUsers): Option[RegisteredUser] = {
@@ -42,8 +59,8 @@ object RegisteredUsers {
   }
 
   def setWaitingForApproval(users: RegisteredUsers, user: RegisteredUser,
-                            waitingForApproval: Boolean): RegisteredUser = {
-    val u = user.modify(_.waitingForAcceptance).setTo(waitingForApproval)
+                            guestStatus: String): RegisteredUser = {
+    val u = user.modify(_.guestStatus).setTo(guestStatus)
     users.save(u)
     u
   }
@@ -55,6 +72,17 @@ object RegisteredUsers {
     u
   }
 
+  def updateUserJoin(users: RegisteredUsers, user: RegisteredUser): RegisteredUser = {
+    val u = user.copy(joined = true)
+    users.save(u)
+    u
+  }
+
+  def markAsUserFailedToJoin(users: RegisteredUsers, user: RegisteredUser): RegisteredUser = {
+    val u = user.copy(markAsJoinTimedOut = true)
+    users.save(u)
+    u
+  }
 }
 
 class RegisteredUsers {
@@ -68,13 +96,26 @@ class RegisteredUsers {
   }
 
   private def delete(id: String): Option[RegisteredUser] = {
-    val ru = regUsers.get(id)
-    ru foreach { u => regUsers -= u.authToken }
+    val ru = regUsers.values.find(p => p.id == id)
+    ru foreach { u =>
+      regUsers -= u.authToken
+    }
     ru
   }
 }
 
-case class RegisteredUser(id: String, externId: String, name: String, role: String,
-                          authToken: String, avatarURL: String, guest: Boolean,
-                          authed: Boolean, waitingForAcceptance: Boolean)
+case class RegisteredUser(
+    id:                 String,
+    externId:           String,
+    name:               String,
+    role:               String,
+    authToken:          String,
+    avatarURL:          String,
+    guest:              Boolean,
+    authed:             Boolean,
+    guestStatus:        String,
+    registeredOn:       Long,
+    joined:             Boolean,
+    markAsJoinTimedOut: Boolean
+)
 
